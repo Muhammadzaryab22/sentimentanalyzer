@@ -1,0 +1,162 @@
+library(tidytext)
+library(RSelenium)
+library(tidyverse)
+library(netstat)
+library(googlesheets4)
+library(tidyr)
+library(gdata)
+
+## making function
+course_gpt3 <- function(val, temp){
+  
+  initPrompt <- "Classify each comment into positive or negative"
+  kw1 <- "Fantastic"
+  Cl1 <- "positive"
+  
+  kw2 <- "this is amazing"
+  Cl2 <- "positive"
+  
+  kw3 <- "awful"
+  Cl3 <- "negative"
+  
+  kw4 <- "need more of this"
+  Cl4 <- "positive"
+  
+  kw5 <- "this is bad"
+  Cl5 <- "negative"
+  
+  
+  catPrompt = paste0("prompt : ", initPrompt,
+                     "\ndish: " , kw1 , ", country :" , Cl1 ,
+                     "\ndish: " , kw2 , ", country :" , Cl2 ,
+                     "\ndish: " , kw3 , ", country :" , Cl3 ,
+                     "\ndish: " , kw4 , ", country :" , Cl4 ,
+                     "\ndish: " , kw5 , ", country :" , Cl5 ,
+                     "\n\ndish: ",val,", country :")
+  
+  result <- create_completion(
+    model = "text-davinci-002",
+    max_tokens = 2,
+    temperature = 0.7,
+    top_p = 1,
+    n = 1,
+    stream = F, 
+    prompt = catPrompt) %>% 
+    pluck('choices') %>% 
+    map_chr(~ .x$text)
+  
+  strsplit(result,"\n")[[1]][1]
+  
+}
+
+### create function 2
+## collecting comments
+getsentiments <- function(link){
+  
+  remDr$navigate(link)
+  
+  Sys.sleep(4)
+
+comments <- (remDr$findElements(using = 'xpath', '//span[@class="_aacl _aaco _aacu _aacx _aad7 _aade"]'))
+
+comments <- lapply(comments, function(x) x$getElementText()) %>% unlist()
+
+## convert to df
+
+comdf <- data.frame(comments)
+
+comdf <- comdf %>%  rowwise() %>% mutate(sentiment = course_gpt3(comments))
+
+Sys.sleep(3)
+
+comdf_summary <- comdf %>%
+  group_by(sentiment) %>%
+  summarize(n = n()) %>%
+  mutate(percentage = n/sum(n)*100) %>%
+  select(sentiment, percentage) %>%
+  pivot_wider(names_from = sentiment, values_from = percentage) %>% select(positive)
+
+}
+
+
+
+posts <- read.csv("D:\\rworkspaces\\mintel\\instascraper\\spotlight.csv")
+write_csv(posts, "D:\\rworkspaces\\mintel\\instascraper\\spotlightsentiment.csv")
+posts$Positives <- NA
+
+for (i in 1:26) {
+  tryCatch({
+    # Get the link from the current row
+    link <- posts[i, "Post.Link"]
+    
+    # Call the getcollabs() function and catch any errors
+    output <- tryCatch(getsentiments(link),
+                       error = function(e){
+                         return(NULL)
+                       })
+    if (!is.null(output)){                 
+      posts[i, "Positives"] <- output[[1]]
+    } else {
+      posts[i, "Positives"] <- NA
+    }
+  })
+}
+
+output<- getsentiments(posts$Post.Link[9])
+
+remDr$navigate("https://www.instagram.com/p/CqKxYPSjP4B/")
+## collecting comments
+comments <- (remDr$findElements(using = 'xpath', '//span[@class="_aacl _aaco _aacu _aacx _aad7 _aade"]'))
+
+comments <- lapply(comments, function(x) x$getElementText()) %>% unlist()
+
+## convert to df
+
+comdf <- data.frame(comments)
+
+comdf <- comdf %>%  rowwise() %>% mutate(sentiment = course_gpt3(comments))
+
+comdf_summary <- comdf %>%
+  group_by(sentiment) %>%
+  summarize(n = n()) %>%
+  mutate(percentage = n/sum(n)*100) %>%
+  select(sentiment, percentage) %>%
+  pivot_wider(names_from = sentiment, values_from = percentage)
+
+empty <- list()
+## creating wordcloud
+for (i in 24:26) {
+  tryCatch({
+    # Get the link from the current row
+    link <- posts[i, "Post.Link"]
+    
+    # Call the getcollabs() function and catch any errors
+    remDr$navigate(link)
+    
+    Sys.sleep(4)
+    
+    comments <- (remDr$findElements(using = 'xpath', '//span[@class="_aacl _aaco _aacu _aacx _aad7 _aade"]'))
+    
+    comments <- lapply(comments, function(x) x$getElementText()) %>% unlist()
+    
+    ## convert to df
+    
+    comdf <- data.frame(comments)
+    
+    empty[i] <- comdf
+    
+  })
+}
+
+allcomments3 = do.call(rbind, empty)
+
+allcommentsdf <- as.data.frame(allcomments2)
+
+freqtable <- allcommentsdf %>% select(V1) %>%
+  unnest_tokens(word, V1) %>%
+  count(word, sort = TRUE) 
+
+library(wordcloud2)
+wordcloud <- wordcloud2(freqtable, size = 1.5, color = "random-light")
+
+
